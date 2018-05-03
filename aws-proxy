@@ -1,0 +1,128 @@
+#!/bin/bash
+
+set -e;
+
+echo 'Checking AWS credentials...';
+aws sts get-caller-identity;
+
+echo '';
+
+PS3='Please select a region: ';
+
+REGION_LABELS=(
+    'Frankfurt' 'Ireland' 'London' 'Mumbai' 'Ohio' 'Oregon' 'Singapore' 'Sydney' 'Tokyo' 'Virginia'
+)
+
+select REGION_LABEL in "${REGION_LABELS[@]}"
+do
+    case $REGION_LABEL in
+        'Virginia')
+            export AWS_DEFAULT_REGION=us-east-1; break;;
+        'Ohio')
+            export AWS_DEFAULT_REGION=us-east-2; break;;
+        'Oregon')
+            export AWS_DEFAULT_REGION=us-west-2; break;;
+        'Tokyo')
+            export AWS_DEFAULT_REGION=ap-northeast-1; break;;
+        'Mumbai')
+            export AWS_DEFAULT_REGION=ap-south-1; break;;
+        'Singapore')
+            export AWS_DEFAULT_REGION=ap-southeast-1; break;;
+        'Sydney')
+            export AWS_DEFAULT_REGION=ap-southeast-2; break;;
+        'Frankfurt')
+            export AWS_DEFAULT_REGION=eu-central-1; break;;
+        'Ireland')
+            export AWS_DEFAULT_REGION=eu-west-1; break;;
+        'London')
+            export AWS_DEFAULT_REGION=eu-west-2; break;;
+        *) echo 'Invalid region, please try again.';
+    esac
+done
+
+AVAILABILITY_ZONE=${AWS_DEFAULT_REGION}a;
+
+echo -e "\nUsing availability zone $AVAILABILITY_ZONE...";
+
+SERVICE_GUID=`printf "open\nget State:/Network/Global/IPv4\nd.show" | \
+    scutil | \
+    grep "PrimaryService" | \
+    awk '{print $3}'`;
+
+SERVICE_NAME=`printf "open\nget Setup:/Network/Service/$SERVICE_GUID\nd.show" | \
+    scutil | \
+    grep "UserDefinedName" | \
+    awk -F': ' '{print $2}'`;
+
+INSTANCE_NAME="proxy_`whoami`_`date +%Y-%m-%d`"
+
+PRIVATE_KEY=`mktemp`;
+
+failed() {
+  echo 'FAILED - this step may need to be done manually.';
+}
+
+cleanup() {
+    echo -e '\n\nDeleting private key...';
+    rm $PRIVATE_KEY;
+
+    echo 'Disabling SOCKS proxy...';
+    networksetup -setsocksfirewallproxystate "$SERVICE_NAME" off || failed;
+
+    echo -e '\nDestroying instance...';
+    aws lightsail delete-instance \
+        --instance-name $INSTANCE_NAME || failed;
+
+    echo -e '\nDone.';
+}
+
+trap cleanup EXIT;
+
+echo 'Downloading SSH private key...';
+aws lightsail download-default-key-pair \
+    --output text \
+    --query privateKeyBase64 > $PRIVATE_KEY;
+
+
+BLUEPRINT_ID=`aws lightsail get-blueprints \
+    --output text \
+    --query "blueprints[?name=='Amazon Linux'].blueprintId"`;
+
+BUNDLE_ID=`aws lightsail get-bundles \
+    --output text \
+    --query 'bundles[0].bundleId'`;
+
+echo -e '\nCreating instance...';
+aws lightsail create-instances \
+    --instance-names  $INSTANCE_NAME \
+    --availability-zone "$AVAILABILITY_ZONE" \
+    --blueprint-id "$BLUEPRINT_ID" \
+    --bundle-id "$BUNDLE_ID" || true;
+
+IP_ADDRESS=None;
+
+while [ $IP_ADDRESS == 'None' ]; do
+    IP_ADDRESS=`aws lightsail get-instance \
+        --instance-name $INSTANCE_NAME \
+        --output text \
+        --query 'instance.publicIpAddress'`;
+done;
+
+PROXY_COMMAND="echo -e '\nEnabling SOCKS proxy...';";
+PROXY_COMMAND="$PROXY_COMMAND networksetup -setsocksfirewallproxy '"$SERVICE_NAME"' 127.0.0.1 1080;";
+PROXY_COMMAND="$PROXY_COMMAND echo 'Connected! Press ^C to exit.';";
+
+echo -e "\nConnecting to $IP_ADDRESS, please wait a few seconds...";
+
+set +e;
+false;
+
+while [ $? -ne 0 ]; do
+    ssh ec2-user@$IP_ADDRESS \
+      -N \
+      -D 1080 \
+      -i $PRIVATE_KEY \
+      -o StrictHostKeyChecking=no \
+      -o LocalCommand="$PROXY_COMMAND" \
+      -o PermitLocalCommand=yes || (sleep 5 && false);
+done;
