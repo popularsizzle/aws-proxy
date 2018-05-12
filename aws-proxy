@@ -67,9 +67,11 @@ cleanup() {
     rm $PRIVATE_KEY;
 
     echo 'Disabling SOCKS proxy...';
+
     networksetup -setsocksfirewallproxystate "$SERVICE_NAME" off || failed;
 
     echo -e '\nDestroying instance...';
+
     aws lightsail delete-instance \
         --instance-name $INSTANCE_NAME || failed;
 
@@ -79,10 +81,10 @@ cleanup() {
 trap cleanup EXIT;
 
 echo 'Downloading SSH private key...';
+
 aws lightsail download-default-key-pair \
     --output text \
     --query privateKeyBase64 > $PRIVATE_KEY;
-
 
 BLUEPRINT_ID=`aws lightsail get-blueprints \
     --output text \
@@ -93,6 +95,7 @@ BUNDLE_ID=`aws lightsail get-bundles \
     --query 'bundles[0].bundleId'`;
 
 echo -e '\nCreating instance...';
+
 aws lightsail create-instances \
     --instance-names  $INSTANCE_NAME \
     --availability-zone "$AVAILABILITY_ZONE" \
