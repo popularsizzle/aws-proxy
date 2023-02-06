@@ -88,7 +88,7 @@ aws lightsail download-default-key-pair \
 
 BLUEPRINT_ID=`aws lightsail get-blueprints \
     --output text \
-    --query "blueprints[?name=='Amazon Linux'].blueprintId"`;
+    --query "blueprints[?name=='Amazon Linux 2'].blueprintId"`;
 
 BUNDLE_ID=`aws lightsail get-bundles \
     --output text \
